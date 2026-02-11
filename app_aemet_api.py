@@ -56,3 +56,4 @@ def clima_historico(
 
     except requests.RequestException as e:
         raise HTTPException(status_code=500, detail=f"No se pudo obtener la geolocalización: {e}")
+
