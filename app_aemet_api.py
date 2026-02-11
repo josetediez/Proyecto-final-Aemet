@@ -123,7 +123,7 @@ class GeminiResponse(BaseModel):
 # =========================
 app = FastAPI(title="AEMET Forecast API", version="1.0.0")
 
-AEMET_API_KEY = os.environ.get("AEMET_API_KEY")
+AEMET_API_KEY = os.environ.get(""https://opendata.aemet.es/opendata/api/observacion/convencional/datos/estacion/{estacion}/"")
 AEMET_URL = "https://opendata.aemet.es/opendata/api/observacion/convencional/datos/estacion/{estacion}/"
 
 
@@ -248,3 +248,4 @@ def preguntale_a_gemini(req: GeminiRequest):
 
     except requests.RequestException as e:
         raise HTTPException(status_code=500, detail=str(e))
+
