@@ -4,7 +4,10 @@ import requests
 app = FastAPI()
 
 @app.get("/clima_web")
-def clima_web(ciudad: str = Query(..., description="Ciudad de la cual quieres saber la temperatura actual")):
+def clima_web(
+    ciudad: str = Query(..., description="Ciudad de la cual quieres saber la temperatura"),
+    fecha: str = Query(..., description="Fecha en formato YYYY-MM-DD")
+):
     try:
         # Geocodificación con Open-Meteo
         geo_resp = requests.get(
@@ -21,32 +24,37 @@ def clima_web(ciudad: str = Query(..., description="Ciudad de la cual quieres sa
         lat = geo_data["results"][0]["latitude"]
         lon = geo_data["results"][0]["longitude"]
 
-        # Clima actual con Open-Meteo
+        # Clima para la fecha especificada con Open-Meteo
         weather_resp = requests.get(
             "https://api.open-meteo.com/v1/forecast",
             params={
                 "latitude": lat,
                 "longitude": lon,
-                "current_weather": True
+                "daily": "temperature_2m_max,temperature_2m_min,apparent_temperature_max,apparent_temperature_min,precipitation_sum",
+                "start_date": fecha,
+                "end_date": fecha,
+                "timezone": "auto"
             },
             timeout=10
         )
         weather_resp.raise_for_status()
         weather_data = weather_resp.json()
 
-        if "current_weather" not in weather_data:
-            raise HTTPException(status_code=500, detail="No se pudo obtener el clima actual")
+        if "daily" not in weather_data or not weather_data["daily"].get("temperature_2m_max"):
+            raise HTTPException(status_code=404, detail=f"No hay datos para la fecha {fecha}")
 
-        current = weather_data["current_weather"]
+        daily = weather_data["daily"]
 
         return {
             "ciudad": ciudad,
             "latitud": lat,
             "longitud": lon,
-            "temperatura": current.get("temperature"),
-            "velocidad_viento": current.get("windspeed"),
-            "direccion_viento": current.get("winddirection"),
-            "fecha_hora": current.get("time")
+            "fecha": fecha,
+            "temperatura_maxima": daily["temperature_2m_max"][0],
+            "temperatura_minima": daily["temperature_2m_min"][0],
+            "temperatura_aparente_max": daily["apparent_temperature_max"][0],
+            "temperatura_aparente_min": daily["apparent_temperature_min"][0],
+            "precipitacion": daily["precipitation_sum"][0]
         }
 
     except requests.RequestException as e:
