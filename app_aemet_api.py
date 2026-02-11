@@ -7,7 +7,7 @@ app = FastAPI()
 class CiudadRequest(BaseModel):
     ciudad: str
 
-@app.post("/clima_web")
+@app.post("/prediccion")
 def clima_web(req: CiudadRequest):
     try:
         # Geocodificación con Open-Meteo
@@ -66,3 +66,4 @@ def clima_web(req: CiudadRequest):
 
     except requests.RequestException as e:
         raise HTTPException(status_code=500, detail=f"No se pudo obtener el clima: {e}")
+
