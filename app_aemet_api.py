@@ -5,9 +5,11 @@ import joblib
 import psycopg2
 import psycopg2.extras
 import pandas as pd
-from fastapi import FastAPI
+import requests
+from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
-from typing import Optional
+from typing import List, Optional
+
 # =========================
 # CONFIGURACIÓN BD
 # =========================
@@ -30,20 +32,23 @@ def get_connection():
         password=DB_PASSWORD
     )
 
-
 # =========================
-# FUNCIONES DE MODELO (S3)
+# MODELOS ML (S3)
 # =========================
 BUCKET_MODELOS = "modelos-forecasting"
 MODEL_TMAX_KEY = "model_tmax.pkl"
 MODEL_TMIN_KEY = "model_tmin.pkl"
 
+s3 = boto3.client("s3")
+
 
 def load_model(key: str):
-    s3 = boto3.client("s3")
     obj = s3.get_object(Bucket=BUCKET_MODELOS, Key=key)
     return joblib.load(io.BytesIO(obj["Body"].read()))
 
+
+model_tmax = load_model(MODEL_TMAX_KEY)
+model_tmin = load_model(MODEL_TMIN_KEY)
 
 # =========================
 # Pydantic
@@ -63,8 +68,22 @@ class ForecastRequest(BaseModel):
 
 class PredictionResponse(BaseModel):
     dia: int
-    temperatura_maxima_predicha: Optional[float]
-    temperatura_minima_predicha: Optional[float]
+    temperatura_maxima_predicha: float
+    temperatura_minima_predicha: float
+
+
+class GeminiRequest(BaseModel):
+    estacion: str  # código de estación o nombre
+    fecha: Optional[str] = None  # fecha opcional YYYY-MM-DD
+
+
+class GeminiResponse(BaseModel):
+    estacion: str
+    fecha: str
+    temperatura_maxima: Optional[float]
+    temperatura_minima: Optional[float]
+    humedad_relativa: Optional[float]
+    presion_atmosferica: Optional[float]
 
 
 # =========================
@@ -84,35 +103,30 @@ def status():
 # =========================
 # ENDPOINT HISTÓRICO
 # =========================
-@app.get(
-    "/temperaturas",
-    response_model=list[TemperatureResponse]
-)
+@app.get("/temperaturas", response_model=List[TemperatureResponse])
 def get_temperaturas(
     ubicacion: Optional[str] = None,
     limit: int = 7
 ):
     conn = get_connection()
-    cur = conn.cursor(
-        cursor_factory=psycopg2.extras.RealDictCursor
-    )
+    cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
 
     query = """
     SELECT
-        data->>'numero_de_estacion'           AS numero_de_estacion,
-        data->>'ubicacion_de_la_estacion'     AS ubicacion_de_la_estacion,
-        data->>'fecha'                        AS fecha,
-        (data->>'temperatura_maxima')::float  AS temperatura_maxima,
-        (data->>'temperatura_minima')::float  AS temperatura_minima
+        numero_de_estacion,
+        ubicacion_de_la_estacion,
+        fecha,
+        temperatura_maxima,
+        temperatura_minima
     FROM observaciones
     """
     params = []
 
     if ubicacion:
-        query += " WHERE data->>'ubicacion_de_la_estacion' = %s"
+        query += " WHERE ubicacion_de_la_estacion = %s"
         params.append(ubicacion)
 
-    query += " ORDER BY data->>'fecha' DESC LIMIT %s"
+    query += " ORDER BY fecha DESC LIMIT %s"
     params.append(limit)
 
     cur.execute(query, tuple(params))
@@ -126,19 +140,11 @@ def get_temperaturas(
 # =========================
 # ENDPOINT FORECAST
 # =========================
-@app.post(
-    "/forecast",
-    response_model=list[PredictionResponse]
-)
+@app.post("/forecast", response_model=List[PredictionResponse])
 def forecast(req: ForecastRequest):
     dias = req.dias
-    ubicacion = req.ubicacion
 
-    # Cargar los modelos bajo demanda (no al inicio)
-    model_tmax = load_model(MODEL_TMAX_KEY)
-    model_tmin = load_model(MODEL_TMIN_KEY)
-
-    # Crear features (día índice)
+    # Feature mínima: día índice
     X_future = pd.DataFrame({"dia": range(1, dias + 1)})
 
     tmax_preds = model_tmax.predict(X_future)
@@ -155,5 +161,50 @@ def forecast(req: ForecastRequest):
     return results
 
 
+# =========================
+# ENDPOINT PREGÚNTALE A GEMINI
+# =========================
+AEMET_API_KEY = os.environ.get("eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJqb3NldGVkaWV6QGdtYWlsLmNvbSIsImp0aSI6IjMyZTE3MTQ4LWExYmQtNDY1OS1hMDlmLTMyMDhiNjQzZTcxZCIsImlzcyI6IkFFTUVUIiwiaWF0IjoxNzYxMjM0MTU4LCJ1c2VySWQiOiIzMmUxNzE0OC1hMWJkLTQ2NTktYTA5Zi0zMjA4YjY0M2U3MWQiLCJyb2xlIjoiIn0.U4LALv8ROVsg87pDNiAXU6Ba1ANIQM1M-6VWbuOMx8s")
+AEMET_URL = "https://opendata.aemet.es/opendata/api/observacion/convencional/datos/estacion/{estacion}/"
+
+@app.post("/preguntale_a_gemini", response_model=GeminiResponse)
+def preguntale_a_gemini(req: GeminiRequest):
+    headers = {"api_key": AEMET_API_KEY}
+    url = AEMET_URL.format(estacion=req.estacion)
+
+    try:
+        # Obtener metadatos de URL de datos reales
+        r = requests.get(url)
+        r.raise_for_status()
+        json_meta = r.json()
+        datos_url = json_meta.get("datos")
+        if not datos_url:
+            raise HTTPException(status_code=404, detail="No se encontraron datos de la estación")
+
+        # Obtener los datos reales
+        r2 = requests.get(datos_url)
+        r2.raise_for_status()
+        datos = r2.json()
+
+        # Filtrar por fecha si se pasó
+        if req.fecha:
+            datos = [d for d in datos if d.get("fecha") == req.fecha]
+            if not datos:
+                raise HTTPException(status_code=404, detail="No hay datos para esa fecha")
+
+        # Tomamos el último registro (más reciente)
+        ultimo = datos[-1]
+
+        return GeminiResponse(
+            estacion=req.estacion,
+            fecha=ultimo.get("fecha"),
+            temperatura_maxima=ultimo.get("ta_max"),
+            temperatura_minima=ultimo.get("ta_min"),
+            humedad_relativa=ultimo.get("hr"),
+            presion_atmosferica=ultimo.get("pres_max")
+        )
+
+    except requests.RequestException as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
