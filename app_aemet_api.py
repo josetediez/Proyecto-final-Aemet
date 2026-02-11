@@ -1,4 +1,5 @@
-import os
+
+  import os
 import io
 import boto3
 import joblib
@@ -7,7 +8,7 @@ import psycopg2.extras
 import pandas as pd
 from fastapi import FastAPI
 from pydantic import BaseModel
-
+from typing import Optional
 # =========================
 # CONFIGURACIÓN BD
 # =========================
@@ -52,8 +53,8 @@ class TemperatureResponse(BaseModel):
     numero_de_estacion: str
     ubicacion_de_la_estacion: str
     fecha: str
-    temperatura_maxima: float | None
-    temperatura_minima: float | None
+    temperatura_maxima: Optional[float]
+    temperatura_minima: Optional[float]
 
 
 class ForecastRequest(BaseModel):
@@ -63,8 +64,8 @@ class ForecastRequest(BaseModel):
 
 class PredictionResponse(BaseModel):
     dia: int
-    temperatura_maxima_predicha: float
-    temperatura_minima_predicha: float
+    temperatura_maxima_predicha: Optional[float]
+    temperatura_minima_predicha: Optional[float]
 
 
 # =========================
@@ -153,3 +154,4 @@ def forecast(req: ForecastRequest):
         })
 
     return results
+
