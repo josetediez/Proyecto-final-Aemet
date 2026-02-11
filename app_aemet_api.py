@@ -183,7 +183,7 @@ from fastapi import HTTPException
 def preguntale_a_gemini(req: Optional[GeminiRequest] = None):
 
     if not AEMET_API_KEY:
-        raise HTTPException(status_code=500, detail="Falta API key de AEMET")
+        raise HTTPException(status_code=500, detail="eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJqb3NldGVkaWV6QGdtYWlsLmNvbSIsImp0aSI6IjMyZTE3MTQ4LWExYmQtNDY1OS1hMDlmLTMyMDhiNjQzZTcxZCIsImlzcyI6IkFFTUVUIiwiaWF0IjoxNzYxMjM0MTU4LCJ1c2VySWQiOiIzMmUxNzE0OC1hMWJkLTQ2NTktYTA5Zi0zMjA4YjY0M2U3MWQiLCJyb2xlIjoiIn0.U4LALv8ROVsg87pDNiAXU6Ba1ANIQM1M-6VWbuOMx8s")
 
     estacion = req.estacion if req and req.estacion else "barcelona"
     fecha = req.fecha if req and req.fecha else None
@@ -222,3 +222,4 @@ def preguntale_a_gemini(req: Optional[GeminiRequest] = None):
 
     except requests.RequestException as e:
         raise HTTPException(status_code=500, detail=str(e))
+
