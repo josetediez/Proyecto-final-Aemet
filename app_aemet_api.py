@@ -15,7 +15,7 @@ def clima_web(req: ClimaRequest):
     url = f"https://wttr.in/{req.ciudad}?format=j1"  # JSON de wttr.in
     
     try:
-        r = requests.get(url, timeout=10)
+        r = requests.get(url, timeout=50)
         r.raise_for_status()
         datos = r.json()
         
@@ -33,5 +33,6 @@ def clima_web(req: ClimaRequest):
     
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"No se pudo obtener el clima: {e}")
+
 
 
