@@ -1,4 +1,3 @@
-
 import os
 import io
 import boto3
@@ -90,7 +89,7 @@ def status():
     response_model=list[TemperatureResponse]
 )
 def get_temperaturas(
-    ubicacion: str | None = None,
+    ubicacion: Optional[str] = None,
     limit: int = 7
 ):
     conn = get_connection()
@@ -154,5 +153,7 @@ def forecast(req: ForecastRequest):
         })
 
     return results
+
+
 
 
