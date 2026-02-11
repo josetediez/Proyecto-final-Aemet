@@ -111,12 +111,13 @@ def get_temperaturas(ubicacion: Optional[str] = None, limit: int = 7):
 
     query = """
     SELECT
-        numero_de_estacion,
-        ubicacion_de_la_estacion,
-        fecha,
-        temperatura_maxima,
-        temperatura_minima
-    FROM datos_aemet.observaciones
+    numero_de_estacion,
+    ubicacion_de_la_estacion,
+    fecha,
+    temperatura_maxima,
+    temperatura_minima
+    FROM observaciones
+
     """
     params = []
     if ubicacion:
@@ -208,4 +209,5 @@ def preguntale_a_gemini(req: GeminiRequest):
 
     except requests.RequestException as e:
         raise HTTPException(status_code=500, detail=str(e))
+
 
