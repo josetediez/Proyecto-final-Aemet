@@ -1,9 +1,6 @@
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 import requests
-from io import BytesIO
-import base64
-import matplotlib.pyplot as plt
 
 app = FastAPI()
 
@@ -28,7 +25,7 @@ def clima_web(req: CiudadRequest):
         lat = geo_data["results"][0]["latitude"]
         lon = geo_data["results"][0]["longitude"]
 
-        # Clima actual + predicción diaria 7 días
+        # Clima diario 7 días
         weather_resp = requests.get(
             "https://api.open-meteo.com/v1/forecast",
             params={
@@ -51,24 +48,11 @@ def clima_web(req: CiudadRequest):
         temp_max = daily["temperature_2m_max"]
         temp_min = daily["temperature_2m_min"]
 
-        # Generar gráfico
-        plt.figure(figsize=(8,4))
-        plt.plot(dates, temp_max, marker='o', label="Temp. Máx")
-        plt.plot(dates, temp_min, marker='o', label="Temp. Mín")
-        plt.fill_between(dates, temp_min, temp_max, color='orange', alpha=0.1)
-        plt.xlabel("Fecha")
-        plt.ylabel("Temperatura (°C)")
-        plt.title(f"Pronóstico de temperatura para {req.ciudad}")
-        plt.legend()
-        plt.xticks(rotation=45)
-        plt.tight_layout()
-
-        # Convertir gráfico a base64
-        buf = BytesIO()
-        plt.savefig(buf, format="png")
-        plt.close()
-        buf.seek(0)
-        img_base64 = base64.b64encode(buf.read()).decode("utf-8")
+        # Generar gráfico ASCII simple
+        grafico_ascii = []
+        for max_t, min_t in zip(temp_max, temp_min):
+            bar = "█" * int(max_t) + " " + "░" * int(min_t)
+            grafico_ascii.append(bar)
 
         return {
             "ciudad": req.ciudad,
@@ -77,7 +61,7 @@ def clima_web(req: CiudadRequest):
             "fechas": dates,
             "temperatura_maxima": temp_max,
             "temperatura_minima": temp_min,
-            "grafico_base64": img_base64
+            "grafico_ascii": grafico_ascii
         }
 
     except requests.RequestException as e:
