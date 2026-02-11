@@ -13,10 +13,7 @@ from typing import List, Optional
 # =========================
 # CONFIGURACIÓN BD
 # =========================
-DB_HOST = os.environ.get(
-    "DB_HOST",
-    "datosaemet.c16uosue6hjy.eu-north-1.rds.amazonaws.com"
-)
+DB_HOST = os.environ.get("DB_HOST", "datosaemet.c16uosue6hjy.eu-north-1.rds.amazonaws.com")
 DB_PORT = int(os.environ.get("DB_PORT", 5432))
 DB_NAME = os.environ.get("DB_NAME", "datosaemet")
 DB_USER = os.environ.get("DB_USER", "postgres")
@@ -33,22 +30,25 @@ def get_connection():
     )
 
 # =========================
-# MODELOS ML (S3)
+# MODELOS ML (S3) - carga bajo demanda
 # =========================
 BUCKET_MODELOS = "modelos-forecasting"
 MODEL_TMAX_KEY = "model_tmax.pkl"
 MODEL_TMIN_KEY = "model_tmin.pkl"
 
 s3 = boto3.client("s3")
+model_tmax = None
+model_tmin = None
 
 
-def load_model(key: str):
-    obj = s3.get_object(Bucket=BUCKET_MODELOS, Key=key)
-    return joblib.load(io.BytesIO(obj["Body"].read()))
-
-
-model_tmax = load_model(MODEL_TMAX_KEY)
-model_tmin = load_model(MODEL_TMIN_KEY)
+def load_models_once():
+    global model_tmax, model_tmin
+    if model_tmax is None:
+        obj = s3.get_object(Bucket=BUCKET_MODELOS, Key=MODEL_TMAX_KEY)
+        model_tmax = joblib.load(io.BytesIO(obj["Body"].read()))
+    if model_tmin is None:
+        obj = s3.get_object(Bucket=BUCKET_MODELOS, Key=MODEL_TMIN_KEY)
+        model_tmin = joblib.load(io.BytesIO(obj["Body"].read()))
 
 # =========================
 # Pydantic
@@ -73,8 +73,8 @@ class PredictionResponse(BaseModel):
 
 
 class GeminiRequest(BaseModel):
-    estacion: str  # código de estación o nombre
-    fecha: Optional[str] = None  # fecha opcional YYYY-MM-DD
+    estacion: str  # código de estación
+    fecha: Optional[str] = None  # formato YYYY-MM-DD
 
 
 class GeminiResponse(BaseModel):
@@ -85,14 +85,13 @@ class GeminiResponse(BaseModel):
     humedad_relativa: Optional[float]
     presion_atmosferica: Optional[float]
 
-
 # =========================
 # FASTAPI
 # =========================
-app = FastAPI(
-    title="AEMET Forecast API",
-    version="1.0.0"
-)
+app = FastAPI(title="AEMET Forecast API", version="1.0.0")
+
+AEMET_API_KEY = os.environ.get("eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJqb3NldGVkaWV6QGdtYWlsLmNvbSIsImp0aSI6IjMyZTE3MTQ4LWExYmQtNDY1OS1hMDlmLTMyMDhiNjQzZTcxZCIsImlzcyI6IkFFTUVUIiwiaWF0IjoxNzYxMjM0MTU4LCJ1c2VySWQiOiIzMmUxNzE0OC1hMWJkLTQ2NTktYTA5Zi0zMjA4YjY0M2U3MWQiLCJyb2xlIjoiIn0.U4LALv8ROVsg87pDNiAXU6Ba1ANIQM1M-6VWbuOMx8s")  
+AEMET_URL = "https://opendata.aemet.es/opendata/api/observacion/convencional/datos/estacion/{estacion}/"
 
 
 @app.get("/")
@@ -104,10 +103,7 @@ def status():
 # ENDPOINT HISTÓRICO
 # =========================
 @app.get("/temperaturas", response_model=List[TemperatureResponse])
-def get_temperaturas(
-    ubicacion: Optional[str] = None,
-    limit: int = 7
-):
+def get_temperaturas(ubicacion: Optional[str] = None, limit: int = 7):
     conn = get_connection()
     cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
 
@@ -121,11 +117,9 @@ def get_temperaturas(
     FROM observaciones
     """
     params = []
-
     if ubicacion:
         query += " WHERE ubicacion_de_la_estacion = %s"
         params.append(ubicacion)
-
     query += " ORDER BY fecha DESC LIMIT %s"
     params.append(limit)
 
@@ -142,11 +136,9 @@ def get_temperaturas(
 # =========================
 @app.post("/forecast", response_model=List[PredictionResponse])
 def forecast(req: ForecastRequest):
+    load_models_once()
     dias = req.dias
-
-    # Feature mínima: día índice
     X_future = pd.DataFrame({"dia": range(1, dias + 1)})
-
     tmax_preds = model_tmax.predict(X_future)
     tmin_preds = model_tmin.predict(X_future)
 
@@ -157,42 +149,40 @@ def forecast(req: ForecastRequest):
             "temperatura_maxima_predicha": float(tmax_preds[i]),
             "temperatura_minima_predicha": float(tmin_preds[i])
         })
-
     return results
 
 
 # =========================
 # ENDPOINT PREGÚNTALE A GEMINI
 # =========================
-AEMET_API_KEY = os.environ.get("eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJqb3NldGVkaWV6QGdtYWlsLmNvbSIsImp0aSI6IjMyZTE3MTQ4LWExYmQtNDY1OS1hMDlmLTMyMDhiNjQzZTcxZCIsImlzcyI6IkFFTUVUIiwiaWF0IjoxNzYxMjM0MTU4LCJ1c2VySWQiOiIzMmUxNzE0OC1hMWJkLTQ2NTktYTA5Zi0zMjA4YjY0M2U3MWQiLCJyb2xlIjoiIn0.U4LALv8ROVsg87pDNiAXU6Ba1ANIQM1M-6VWbuOMx8s")
-AEMET_URL = "https://opendata.aemet.es/opendata/api/observacion/convencional/datos/estacion/{estacion}/"
-
 @app.post("/preguntale_a_gemini", response_model=GeminiResponse)
 def preguntale_a_gemini(req: GeminiRequest):
+    if not AEMET_API_KEY:
+        raise HTTPException(status_code=500, detail="Falta API key de AEMET")
+
     headers = {"api_key": AEMET_API_KEY}
     url = AEMET_URL.format(estacion=req.estacion)
 
     try:
-        # Obtener metadatos de URL de datos reales
-        r = requests.get(url)
+        # Obtener metadatos
+        r = requests.get(url, headers=headers, timeout=10)
         r.raise_for_status()
         json_meta = r.json()
         datos_url = json_meta.get("datos")
         if not datos_url:
             raise HTTPException(status_code=404, detail="No se encontraron datos de la estación")
 
-        # Obtener los datos reales
-        r2 = requests.get(datos_url)
+        # Obtener datos reales
+        r2 = requests.get(datos_url, timeout=10)
         r2.raise_for_status()
         datos = r2.json()
 
-        # Filtrar por fecha si se pasó
+        # Filtrar por fecha si se pasa
         if req.fecha:
             datos = [d for d in datos if d.get("fecha") == req.fecha]
             if not datos:
                 raise HTTPException(status_code=404, detail="No hay datos para esa fecha")
 
-        # Tomamos el último registro (más reciente)
         ultimo = datos[-1]
 
         return GeminiResponse(
