@@ -90,14 +90,14 @@ class GeminiResponse(BaseModel):
 # FASTAPI APP
 # =========================
 
-app = FastAPI(title="AEMET Forecast API", version="1.0.0")
+app = FastAPI(title="AEMET API", version="1.0.0")
 
-AEMET_API_KEY = os.environ.get("AEMET_API_KEY")  
+AEMET_API_KEY = os.environ.get("eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJqb3NldGVkaWV6QGdtYWlsLmNvbSIsImp0aSI6IjMyZTE3MTQ4LWExYmQtNDY1OS1hMDlmLTMyMDhiNjQzZTcxZCIsImlzcyI6IkFFTUVUIiwiaWF0IjoxNzYxMjM0MTU4LCJ1c2VySWQiOiIzMmUxNzE0OC1hMWJkLTQ2NTktYTA5Zi0zMjA4YjY0M2U3MWQiLCJyb2xlIjoiIn0.U4LALv8ROVsg87pDNiAXU6Ba1ANIQM1M-6VWbuOMx8s")  
 AEMET_URL = "https://opendata.aemet.es/opendata/api/observacion/convencional/datos/estacion/{estacion}/"
 
 @app.get("/")
 def status():
-    return {"status": "ok"}
+    return {"status": "Api arrancada"}
 
 # =========================
 # ENDPOINT HISTÓRICO
@@ -214,3 +214,4 @@ def preguntale_a_gemini(req: GeminiRequest):
 
     except requests.RequestException as e:
         raise HTTPException(status_code=500, detail=str(e))
+
