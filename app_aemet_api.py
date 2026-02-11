@@ -176,42 +176,49 @@ def forecast(req: ForecastRequest):
 # ENDPOINT PREGÚNTALE A GEMINI
 # =========================
 
-@app.post("/preguntale_a_gemini", response_model=GeminiResponse)
-def preguntale_a_gemini(req: GeminiRequest):
+from typing import Optional
+from fastapi import HTTPException
+
+@app.post("/preguntale_a_gemini")
+def preguntale_a_gemini(req: Optional[GeminiRequest] = None):
+
     if not AEMET_API_KEY:
         raise HTTPException(status_code=500, detail="Falta API key de AEMET")
 
+    estacion = req.estacion if req and req.estacion else "barcelona"
+    fecha = req.fecha if req and req.fecha else None
+
     headers = {"api_key": AEMET_API_KEY}
-    url = AEMET_URL.format(estacion=req.estacion)
+    url = AEMET_URL.format(estacion=estacion)
 
     try:
         r = requests.get(url, headers=headers, timeout=10)
         r.raise_for_status()
         json_meta = r.json()
+
         datos_url = json_meta.get("datos")
         if not datos_url:
-            raise HTTPException(status_code=404, detail="No se encontraron datos de la estación")
+            raise HTTPException(status_code=404, detail="No se encontraron datos")
 
         r2 = requests.get(datos_url, timeout=10)
         r2.raise_for_status()
         datos = r2.json()
 
-        if req.fecha:
-            datos = [d for d in datos if d.get("fecha") == req.fecha]
+        if fecha:
+            datos = [d for d in datos if d.get("fecha") == fecha]
             if not datos:
                 raise HTTPException(status_code=404, detail="No hay datos para esa fecha")
 
         ultimo = datos[-1]
 
-        return GeminiResponse(
-            estacion=req.estacion,
-            fecha=ultimo.get("fecha"),
-            temperatura_maxima=ultimo.get("ta_max"),
-            temperatura_minima=ultimo.get("ta_min"),
-            humedad_relativa=ultimo.get("hr"),
-            presion_atmosferica=ultimo.get("pres_max")
-        )
+        return {
+            "estacion": estacion,
+            "fecha": ultimo.get("fecha"),
+            "temperatura_maxima": ultimo.get("ta_max"),
+            "temperatura_minima": ultimo.get("ta_min"),
+            "humedad_relativa": ultimo.get("hr"),
+            "presion_atmosferica": ultimo.get("pres_max")
+        }
 
     except requests.RequestException as e:
         raise HTTPException(status_code=500, detail=str(e))
-
