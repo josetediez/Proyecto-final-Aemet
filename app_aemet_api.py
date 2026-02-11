@@ -1,14 +1,23 @@
 from fastapi import FastAPI, HTTPException, Query
+from datetime import datetime
 import requests
+from meteostat import Point, Daily
+import pandas as pd
 
 app = FastAPI()
 
-@app.get("/clima_web")
-def clima_web(
+@app.get("/clima_historico")
+def clima_historico(
     ciudad: str = Query(..., description="Ciudad de la cual quieres saber la temperatura"),
     fecha: str = Query(..., description="Fecha en formato YYYY-MM-DD")
 ):
     try:
+        # Validar fecha
+        try:
+            fecha_dt = datetime.strptime(fecha, "%Y-%m-%d")
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Formato de fecha inválido. Usa YYYY-MM-DD")
+
         # Geocodificación con Open-Meteo
         geo_resp = requests.get(
             "https://geocoding-api.open-meteo.com/v1/search",
@@ -24,38 +33,26 @@ def clima_web(
         lat = geo_data["results"][0]["latitude"]
         lon = geo_data["results"][0]["longitude"]
 
-        # Clima para la fecha especificada con Open-Meteo
-        weather_resp = requests.get(
-            "https://api.open-meteo.com/v1/forecast",
-            params={
-                "latitude": lat,
-                "longitude": lon,
-                "daily": "temperature_2m_max,temperature_2m_min,apparent_temperature_max,apparent_temperature_min,precipitation_sum",
-                "start_date": fecha,
-                "end_date": fecha,
-                "timezone": "auto"
-            },
-            timeout=10
-        )
-        weather_resp.raise_for_status()
-        weather_data = weather_resp.json()
+        # Datos históricos con Meteostat
+        location = Point(lat, lon)
+        data = Daily(location, fecha_dt, fecha_dt)
+        data = data.fetch()
 
-        if "daily" not in weather_data or not weather_data["daily"].get("temperature_2m_max"):
-            raise HTTPException(status_code=404, detail=f"No hay datos para la fecha {fecha}")
+        if data.empty:
+            raise HTTPException(status_code=404, detail=f"No hay datos meteorológicos para {ciudad} en {fecha}")
 
-        daily = weather_data["daily"]
+        # Tomamos la primera fila (solo un día)
+        row = data.iloc[0]
 
         return {
             "ciudad": ciudad,
-            "latitud": lat,
-            "longitud": lon,
             "fecha": fecha,
-            "temperatura_maxima": daily["temperature_2m_max"][0],
-            "temperatura_minima": daily["temperature_2m_min"][0],
-            "temperatura_aparente_max": daily["apparent_temperature_max"][0],
-            "temperatura_aparente_min": daily["apparent_temperature_min"][0],
-            "precipitacion": daily["precipitation_sum"][0]
+            "temperatura_maxima": row["tmax"],
+            "temperatura_minima": row["tmin"],
+            "precipitacion": row["prcp"],
+            "velocidad_viento": row["wspd"],
+            "direccion_viento": row["wdir"]
         }
 
     except requests.RequestException as e:
-        raise HTTPException(status_code=500, detail=f"No se pudo obtener el clima: {e}")
+        raise HTTPException(status_code=500, detail=f"No se pudo obtener la geolocalización: {e}")
