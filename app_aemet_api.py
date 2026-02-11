@@ -14,7 +14,7 @@ def clima_web(req: CiudadRequest):
         geo_resp = requests.get(
             "https://nominatim.openstreetmap.org/search",
             params={"q": req.ciudad, "format": "json", "limit": 1},
-            timeout=10
+            timeout=50
         )
         geo_resp.raise_for_status()
         geo_data = geo_resp.json()
@@ -52,6 +52,7 @@ def clima_web(req: CiudadRequest):
 
     except requests.RequestException as e:
         raise HTTPException(status_code=500, detail=f"No se pudo obtener el clima: {e}")
+
 
 
 
