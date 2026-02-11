@@ -1,27 +1,22 @@
-from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel
-import requests
 from fastapi import FastAPI, HTTPException, Query
+import requests
 
 app = FastAPI()
 
-class CiudadRequest(BaseModel):
-    ciudad: str
-
 @app.post("/prediccion")
-def clima_web(ciudad: str = Query(..., description="Ciudad de la cual quieres predecir la temperatura actual")):
+def prediccion(ciudad: str = Query(..., description="Ciudad de la cual quieres predecir la temperatura")):
     try:
-        # Geocodificación con Open-Meteo
+        # Geocodificación
         geo_resp = requests.get(
             "https://geocoding-api.open-meteo.com/v1/search",
-            params={"name": req.ciudad, "count": 1},
+            params={"name": ciudad, "count": 1},
             timeout=10
         )
         geo_resp.raise_for_status()
         geo_data = geo_resp.json()
 
         if "results" not in geo_data or len(geo_data["results"]) == 0:
-            raise HTTPException(status_code=404, detail=f"No se encontró la ciudad '{req.ciudad}'")
+            raise HTTPException(status_code=404, detail=f"No se encontró la ciudad '{ciudad}'")
 
         lat = geo_data["results"][0]["latitude"]
         lon = geo_data["results"][0]["longitude"]
@@ -52,11 +47,12 @@ def clima_web(ciudad: str = Query(..., description="Ciudad de la cual quieres pr
         # Generar gráfico ASCII simple
         grafico_ascii = []
         for max_t, min_t in zip(temp_max, temp_min):
-            bar = "█" * int(max_t) + " " + "░" * int(min_t)
-            grafico_ascii.append(bar)
+            max_bar = "█" * max(0, int(round(max_t)))
+            min_bar = "░" * max(0, int(round(min_t)))
+            grafico_ascii.append(f"{max_bar}{min_bar}")
 
         return {
-            "ciudad": req.ciudad,
+            "ciudad": ciudad,
             "latitud": lat,
             "longitud": lon,
             "fechas": dates,
@@ -69,13 +65,10 @@ def clima_web(ciudad: str = Query(..., description="Ciudad de la cual quieres pr
         raise HTTPException(status_code=500, detail=f"No se pudo obtener el clima: {e}")
 
 
-
-
-
 @app.get("/clima_web")
-def clima_web(ciudad: str = Query(..., description="Ciudad de la cual quieres saber la temperatura actual")):
+def clima_actual(ciudad: str = Query(..., description="Ciudad de la cual quieres saber la temperatura actual")):
     try:
-        # Geocodificación con Open-Meteo
+        # Geocodificación
         geo_resp = requests.get(
             "https://geocoding-api.open-meteo.com/v1/search",
             params={"name": ciudad, "count": 1},
@@ -90,7 +83,7 @@ def clima_web(ciudad: str = Query(..., description="Ciudad de la cual quieres sa
         lat = geo_data["results"][0]["latitude"]
         lon = geo_data["results"][0]["longitude"]
 
-        # Clima actual con Open-Meteo
+        # Clima actual
         weather_resp = requests.get(
             "https://api.open-meteo.com/v1/forecast",
             params={
@@ -120,6 +113,4 @@ def clima_web(ciudad: str = Query(..., description="Ciudad de la cual quieres sa
 
     except requests.RequestException as e:
         raise HTTPException(status_code=500, detail=f"No se pudo obtener el clima: {e}")
-
-
 
