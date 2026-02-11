@@ -7,13 +7,13 @@ import psycopg2.extras
 import pandas as pd
 import requests
 from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import List, Optional
-
 
 # =========================
 # CONFIGURACIÓN BD
 # =========================
+
 DB_HOST = os.environ.get("DB_HOST", "datosaemet.c16uosue6hjy.eu-north-1.rds.amazonaws.com")
 DB_PORT = int(os.environ.get("DB_PORT", 5432))
 DB_NAME = os.environ.get("DB_NAME", "datosaemet")
@@ -30,10 +30,10 @@ def get_connection():
         password=DB_PASSWORD
     )
 
-
 # =========================
 # MODELOS ML (S3)
 # =========================
+
 BUCKET_MODELOS = "modelos-forecasting"
 MODEL_TMAX_KEY = "model_tmax.pkl"
 MODEL_TMIN_KEY = "model_tmin.pkl"
@@ -52,10 +52,10 @@ def load_models_once():
         obj = s3.get_object(Bucket=BUCKET_MODELOS, Key=MODEL_TMIN_KEY)
         model_tmin = joblib.load(io.BytesIO(obj["Body"].read()))
 
-
 # =========================
 # Pydantic
 # =========================
+
 class TemperatureResponse(BaseModel):
     numero_de_estacion: str
     ubicacion_de_la_estacion: str
@@ -63,51 +63,18 @@ class TemperatureResponse(BaseModel):
     temperatura_maxima: Optional[float]
     temperatura_minima: Optional[float]
 
-
-class TemperatureQuery(BaseModel):
-    ubicacion: Optional[str] = None
-    limit: int = 7
-
-    class Config:
-        schema_extra = {
-            "example": {
-                "ubicacion": "Sopuerta",
-                "limit": 7
-            }
-        }
-
-
 class ForecastRequest(BaseModel):
     ubicacion: str
-    dias: int
-
-    class Config:
-        schema_extra = {
-            "example": {
-                "ubicacion": "Sopuerta",
-                "dias": 5
-            }
-        }
-
+    dias: int = Field(..., example=7)
 
 class PredictionResponse(BaseModel):
     dia: int
     temperatura_maxima_predicha: float
     temperatura_minima_predicha: float
 
-
 class GeminiRequest(BaseModel):
-    ubicacion: str  # ahora pedimos ubicación en lugar de estación
-    fecha: Optional[str] = None  # formato YYYY-MM-DD
-
-    class Config:
-        schema_extra = {
-            "example": {
-                "ubicacion": "Bilbao",
-                "fecha": "2026-02-10"
-            }
-        }
-
+    ubicacion: str = Field(..., example="Sopuerta")
+    fecha: Optional[str] = Field(None, example="2026-02-10")
 
 class GeminiResponse(BaseModel):
     estacion: str
@@ -117,24 +84,26 @@ class GeminiResponse(BaseModel):
     humedad_relativa: Optional[float]
     presion_atmosferica: Optional[float]
 
-
 # =========================
 # FASTAPI
 # =========================
+
 app = FastAPI(title="AEMET Forecast API", version="1.0.0")
 
-AEMET_API_KEY = os.environ.get("https://opendata.aemet.es/opendata/api/observacion/convencional/datos/estacion/{estacion}/")
+AEMET_API_KEY = os.environ.get("AEMET_API_KEY", "")
 AEMET_URL = "https://opendata.aemet.es/opendata/api/observacion/convencional/datos/estacion/{estacion}/"
 
+# =========================
+# ENDPOINTS
+# =========================
 
 @app.get("/")
 def status():
     return {"status": "ok"}
 
-
-# =========================
-# ENDPOINT HISTÓRICO
-# =========================
+# -------------------------
+# Histórico
+# -------------------------
 @app.get("/temperaturas", response_model=List[TemperatureResponse])
 def get_temperaturas(ubicacion: Optional[str] = None, limit: int = 7):
     conn = get_connection()
@@ -147,7 +116,7 @@ def get_temperaturas(ubicacion: Optional[str] = None, limit: int = 7):
         fecha,
         temperatura_maxima,
         temperatura_minima
-    FROM observaciones
+    FROM datos_aemet.observaciones
     """
     params = []
     if ubicacion:
@@ -163,10 +132,9 @@ def get_temperaturas(ubicacion: Optional[str] = None, limit: int = 7):
     conn.close()
     return rows
 
-
-# =========================
-# ENDPOINT FORECAST
-# =========================
+# -------------------------
+# Forecast
+# -------------------------
 @app.post("/forecast", response_model=List[PredictionResponse])
 def forecast(req: ForecastRequest):
     load_models_once()
@@ -184,44 +152,37 @@ def forecast(req: ForecastRequest):
         })
     return results
 
-
-# =========================
-# ENDPOINT PREGÚNTALE A GEMINI
-# =========================
+# -------------------------
+# Pregúntale a Gemini por ubicación
+# -------------------------
 @app.post("/preguntale_a_gemini", response_model=GeminiResponse)
 def preguntale_a_gemini(req: GeminiRequest):
     if not AEMET_API_KEY:
         raise HTTPException(status_code=500, detail="Falta API key de AEMET")
 
+    # Buscar código de estación por ubicación
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute(
+        "SELECT numero_de_estacion FROM datos_aemet.observaciones WHERE ubicacion_de_la_estacion = %s ORDER BY fecha DESC LIMIT 1",
+        (req.ubicacion,)
+    )
+    res = cur.fetchone()
+    cur.close()
+    conn.close()
+
+    if not res:
+        raise HTTPException(status_code=404, detail=f"No se encontró estación para {req.ubicacion}")
+
+    estacion = res[0]
     headers = {"api_key": AEMET_API_KEY}
+    url = AEMET_URL.format(estacion=estacion)
 
-    # 1️⃣ Buscar la estación correspondiente a la ubicación
-    estaciones_url = "https://opendata.aemet.es/opendata/api/valores/climatologicos/inventarioestaciones/todas/"
-    try:
-        r = requests.get(estaciones_url, headers=headers, timeout=10)
-        r.raise_for_status()
-        estaciones_meta_url = r.json().get("datos")
-
-        r2 = requests.get(estaciones_meta_url, timeout=10)
-        r2.raise_for_status()
-        estaciones = r2.json()
-
-        # Filtrar por ubicación
-        estaciones_filtradas = [e for e in estaciones if req.ubicacion.lower() in e.get("nombre").lower()]
-        if not estaciones_filtradas:
-            raise HTTPException(status_code=404, detail="No se encontró estación para esa ubicación")
-
-        estacion_codigo = estaciones_filtradas[0]["indicativo"]
-
-    except requests.RequestException as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-    # 2️⃣ Obtener los datos de la estación
-    url = AEMET_URL.format(estacion=estacion_codigo)
     try:
         r = requests.get(url, headers=headers, timeout=10)
         r.raise_for_status()
-        datos_url = r.json().get("datos")
+        json_meta = r.json()
+        datos_url = json_meta.get("datos")
         if not datos_url:
             raise HTTPException(status_code=404, detail="No se encontraron datos de la estación")
 
@@ -229,7 +190,6 @@ def preguntale_a_gemini(req: GeminiRequest):
         r2.raise_for_status()
         datos = r2.json()
 
-        # Filtrar por fecha si se pasa
         if req.fecha:
             datos = [d for d in datos if d.get("fecha") == req.fecha]
             if not datos:
@@ -238,7 +198,7 @@ def preguntale_a_gemini(req: GeminiRequest):
         ultimo = datos[-1]
 
         return GeminiResponse(
-            estacion=estacion_codigo,
+            estacion=estacion,
             fecha=ultimo.get("fecha"),
             temperatura_maxima=ultimo.get("ta_max"),
             temperatura_minima=ultimo.get("ta_min"),
@@ -248,5 +208,4 @@ def preguntale_a_gemini(req: GeminiRequest):
 
     except requests.RequestException as e:
         raise HTTPException(status_code=500, detail=str(e))
-
 
