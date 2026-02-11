@@ -9,7 +9,7 @@ class CiudadRequest(BaseModel):
     ciudad: str
 
 @app.post("/prediccion")
-def clima_web((ciudad: str = Query(..., description="Ciudad de la cual quieres predecir la temperatura actual"))
+def clima_web(ciudad: str = Query(..., description="Ciudad de la cual quieres predecir la temperatura actual")):
     try:
         # Geocodificación con Open-Meteo
         geo_resp = requests.get(
@@ -120,5 +120,6 @@ def clima_web(ciudad: str = Query(..., description="Ciudad de la cual quieres sa
 
     except requests.RequestException as e:
         raise HTTPException(status_code=500, detail=f"No se pudo obtener el clima: {e}")
+
 
 
