@@ -32,22 +32,17 @@ def get_connection():
 
 
 # =========================
-# MODELOS ML (S3)
+# FUNCIONES DE MODELO (S3)
 # =========================
 BUCKET_MODELOS = "modelos-forecasting"
 MODEL_TMAX_KEY = "model_tmax.pkl"
 MODEL_TMIN_KEY = "model_tmin.pkl"
 
-s3 = boto3.client("s3")
-
 
 def load_model(key: str):
+    s3 = boto3.client("s3")
     obj = s3.get_object(Bucket=BUCKET_MODELOS, Key=key)
     return joblib.load(io.BytesIO(obj["Body"].read()))
-
-
-model_tmax = load_model(MODEL_TMAX_KEY)
-model_tmin = load_model(MODEL_TMIN_KEY)
 
 
 # =========================
@@ -139,10 +134,11 @@ def forecast(req: ForecastRequest):
     dias = req.dias
     ubicacion = req.ubicacion
 
-    # Opcional: usar ubicación para filtrar datos históricos si quieres
-    # Por ahora solo generamos predicción usando modelos
+    # Cargar los modelos bajo demanda (no al inicio)
+    model_tmax = load_model(MODEL_TMAX_KEY)
+    model_tmin = load_model(MODEL_TMIN_KEY)
 
-    # Feature mínima: día índice
+    # Crear features (día índice)
     X_future = pd.DataFrame({"dia": range(1, dias + 1)})
 
     tmax_preds = model_tmax.predict(X_future)
